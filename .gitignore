@@ -1,0 +1,9 @@
+/coach
+/bin/
+/logs/
+*.log
+.env
+.envrc
+.agents
+.pi
+.claude
