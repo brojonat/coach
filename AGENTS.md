@@ -58,6 +58,14 @@ The `Agent` interface in `internal/agent/agent.go` is the boundary. No OpenAI-sp
 
 The coaching persona is **assertive, loud, commanding** — not polite. That energy is the feature. Mute is the user's escape valve, not a consent gate.
 
+## Agent-maintained files
+
+Three markdown files at the repo root are lightweight notebooks for agents. **Agents should update these at the end of a task**, not during — treat them as wrap-up artifacts, part of "done."
+
+- **`TODO.md`** — running list of things to do. Agents may add, reorder, and check off items. Use checkboxes (`- [ ]`). Remove an item once it's captured elsewhere (CHANGELOG, commit, closed issue).
+- **`CHANGELOG.md`** — **append-only** log of notable changes. One dated entry per task/PR. Never rewrite prior entries. Brevity beats ceremony.
+- **`LEARNINGS.md`** — things future agents should remember to avoid or do differently. Failed approaches, surprising gotchas, API footguns. Append only; never delete a learning just because it's inconvenient.
+
 ## Common commands
 
 ```bash
