@@ -1,62 +1,124 @@
-# AGENTS.md
+# Development Philosophy
 
-Conventions for AI agents (and humans) working on `coach`.
+This document captures high-level preferences that apply across every project
+bootstrapped from this repo. Language- and framework-specific patterns live in
+the individual skills under `skills/` — this file is about the values that
+should shape decisions before any code gets written.
 
-## Project
+## Unix Philosophy
 
-`coach` is a live terminal coaching agent for non-technical users. The product watches a user's shell in real time and provides commanding, high-energy voice guidance (think Dota 2 live coaching). Target end users are executives who are "computer illiterate" in the terminal sense — the product must ship as a single binary with no runtime dependencies.
+- **Do one thing well.** Each component has a single, well-defined responsibility.
+- **Write programs that compose.** Design for piping and standard interfaces.
+  Outputs should be valid inputs for other programs.
+- **Be quiet by default.** No news is good news. Only output when there's
+  something unexpected to report.
+- **Text streams are the universal interface.** JSON on stdout, human-readable
+  status and errors on stderr, exit codes for success/failure.
 
-## Stack
+## Stdout vs stderr
 
-- **Language:** Go 1.25+
-- **CLI framework:** `github.com/urfave/cli/v3` (not stdlib `flag`)
-- **Voice/realtime:** `github.com/coder/websocket` + OpenAI Realtime API (first impl behind `internal/agent.Agent` interface; provider-agnostic)
-- **Audio:** `github.com/gen2brain/malgo` (miniaudio, self-contained, cross-platform)
-- **TUI (later):** Bubble Tea + Lipgloss
-- **Database:** when needed, use `sqlc` for all queries. No raw SQL strings outside sqlc-generated code. No ORMs.
+- **stdout is for machine-readable output.** Default to JSON. Pipe it, parse it,
+  compose it.
+- **stderr is for humans.** Progress messages, warnings, errors, and anything
+  else that shouldn't contaminate a pipeline.
+- **Interactive CLIs may use friendly formatting on stdout,** but always offer a
+  `--json` / `--format=json` flag for scripting.
 
-## Layout
+## Favor Simplicity
 
+Complex solutions need complex problems to justify them. Reach for the simple
+tool first:
+
+- **SQLite over a dedicated database server** when a single process is enough.
+- **Standard library HTTP over frameworks** — handlers as functions, middleware
+  as composition.
+- **Plain HTML (with a sprinkle of HTMX or similar) over heavy frontend stacks**
+  when the task doesn't demand a SPA.
+- **Environment variables over elaborate config DSLs.**
+- **Standard SQL over ORM magic.**
+- **Plain JSON over custom binary protocols.**
+
+## Simple CLIs
+
+- One command, one job. Compose with pipes, not flags.
+- Subcommands only when you genuinely have a family of related operations.
+- Sensible defaults; require no flags for the common case.
+- `-h` / `--help` always works. Help text shows real usage, not marketing.
+- Exit 0 on success, non-zero on failure. No "successfully completed" banners.
+
+## Hot Reloading
+
+Development should feel instant. Every project should have a hot-reload story:
+Air for Go, `uvicorn --reload` for Python, equivalent tooling for whatever
+stack. Edit file, see result. If hot reload isn't working, fix it before
+writing more code.
+
+## Makefiles as the Front Door
+
+Every project needs a `Makefile` with the primary targets (`build`, `test`,
+`lint`, `run-*`, `deploy-*`) so that humans and agents share a single entry
+point. No one should have to dig through READMEs to figure out the right
+command — `make help` lists everything.
+
+**Dev targets must tee stdout and stderr to files in `logs/`.** A coding agent
+can't iterate on a bug it can't see. When `make run-server` dumps output into
+a separate terminal, the agent is blind; when it tees to `logs/server.log`,
+the agent can `tail` / `grep` / `jq` the output, diagnose what's broken, fix
+the code, and watch the reload pick it up.
+
+```makefile
+.PHONY: run-server
+run-server: ## Run server with hot reload, tee to logs/
+	@mkdir -p logs
+	$(call setup_env, .env.server)
+	uv run uvicorn server.main:app --reload 2>&1 | tee logs/server.log
+	# Go equivalent:
+	# air 2>&1 | tee logs/server.log
 ```
-cmd/coach/          # main entry
-internal/agent/     # voice-agent interface + provider impls
-internal/audio/     # mic/speaker I/O
-internal/persona/   # persona prompts
-internal/scenario/  # scripted terminal-event streams (for persona tuning)
-```
 
-## Conventions
+Keep `logs/` gitignored. The value is the feedback loop, not the artifacts.
 
-### Entry points → Makefile
+## Language Idioms
 
-All main entry points go through the Makefile. Don't document raw `go build` / `go run` invocations in READMEs; document `make run`, `make test`, etc.
+Honor the culture of the language you're in.
 
-Targets load environment from `.env` using:
+### The Zen of Python
 
-```make
-@set -a; . ./.env; set +a; <command>
-```
+> Beautiful is better than ugly. Explicit is better than implicit. Simple is
+> better than complex. Flat is better than nested. Readability counts. There
+> should be one — and preferably only one — obvious way to do it.
 
-`.env` is gitignored. Never commit it.
+Use dataclasses and type hints. Prefer composition over inheritance. Let
+exceptions propagate to the right layer. Don't fight the GIL; use async or
+processes when it matters.
 
-### Testing — red/green TDD
+### Go Idioms
 
-New behavior is written test-first:
+Accept interfaces, return structs. Pass `context.Context` as the first
+parameter. Handle every error with `fmt.Errorf("...: %w", err)`. Goroutines
+have owners that know when they stop. The stdlib is the framework — reach for
+it first, and only adopt a dependency when the stdlib genuinely falls short.
 
-1. Write a failing test that expresses the desired behavior.
-2. Confirm it fails (`make test`) for the right reason.
-3. Implement the minimum code to make it pass.
-4. Refactor with the green test as a safety net.
+## Explicit Dependencies
 
-Run `make test` before every commit. Prefer table-driven tests. Keep tests fast — no network or real audio devices in unit tests; use the `Agent` interface for fakes.
+Never hide dependencies in global state, singletons, or package-level
+variables. Constructors take what they need as parameters. This applies in
+every language:
 
-### Provider-agnostic voice layer
+- Dependencies are visible in type signatures.
+- Testing becomes trivial — swap real for fake at construction time.
+- Lifecycle is clear — whoever constructs something owns its cleanup.
 
-The `Agent` interface in `internal/agent/agent.go` is the boundary. No OpenAI-specific types may leak into `cmd/` or other packages. Adding a new provider (Gemini Live, Anthropic + ElevenLabs) is a new file implementing `Agent`, not a refactor.
+## Production-Ready Defaults
 
-### Persona
+Every service should ship with:
 
-The coaching persona is **assertive, loud, commanding** — not polite. That energy is the feature. Mute is the user's escape valve, not a consent gate.
+- Structured logging (JSON in prod, pretty in dev), level controlled by
+  `LOG_LEVEL`.
+- A `/healthz` endpoint.
+- Prometheus metrics on `/metrics`.
+- Graceful shutdown on SIGTERM.
+- Secrets from environment variables. Never commit `.env` files.
 
 ## Agent-maintained files
 
@@ -66,18 +128,17 @@ Three markdown files at the repo root are lightweight notebooks for agents. **Ag
 - **`CHANGELOG.md`** — **append-only** log of notable changes. One dated entry per task/PR. Never rewrite prior entries. Brevity beats ceremony.
 - **`LEARNINGS.md`** — things future agents should remember to avoid or do differently. Failed approaches, surprising gotchas, API footguns. Append only; never delete a learning just because it's inconvenient.
 
-## Common commands
+## Error Handling
 
-```bash
-make build         # build binary to ./bin/coach
-make run           # full voice loop (mic + speaker + scenario)
-make run-headless  # no audio, print transcripts + raw events
-make test          # go test ./...
-make vet           # go vet ./...
-make tidy          # go mod tidy
-make clean         # rm -rf bin/
-```
+- Handle errors at the layer that can do something about them. Don't swallow,
+  don't blindly re-raise.
+- Wrap errors with context as they propagate. The final message should tell a
+  story: what was being attempted, what went wrong, and why.
+- Validate at system boundaries (user input, external APIs). Trust internal
+  code.
 
-## Secrets
+## When In Doubt
 
-`.env` holds `OPENAI_API_KEY` and other credentials. Gitignored. Never echo, log, or commit.
+Ask: *"Does this add essential value, or does it just add complexity?"* If you
+can't articulate the essential value in one sentence, it's probably
+complexity.

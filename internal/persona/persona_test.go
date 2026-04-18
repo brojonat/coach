@@ -11,7 +11,9 @@ func TestGet(t *testing.T) {
 		key  string
 		want bool
 	}{
-		{"known persona", "assertive-coach", true},
+		{"beginner", "beginner", true},
+		{"intermediate", "intermediate", true},
+		{"advanced", "advanced", true},
 		{"unknown persona", "does-not-exist", false},
 		{"empty key", "", false},
 	}
@@ -25,21 +27,26 @@ func TestGet(t *testing.T) {
 	}
 }
 
-func TestAssertiveCoach(t *testing.T) {
-	p, ok := Get("assertive-coach")
-	if !ok {
-		t.Fatal("assertive-coach missing")
-	}
-	if p.Name != "assertive-coach" {
-		t.Errorf("Name = %q, want %q", p.Name, "assertive-coach")
-	}
-	if len(p.Instructions) < 200 {
-		t.Errorf("Instructions too short: %d chars", len(p.Instructions))
-	}
-	// Spot-check that core persona anchors survived any edit.
-	for _, want := range []string{"assertive", "STOP", "GOAL"} {
-		if !strings.Contains(p.Instructions, want) {
-			t.Errorf("Instructions missing anchor %q", want)
-		}
+func TestAllPersonas(t *testing.T) {
+	for _, name := range Names() {
+		t.Run(name, func(t *testing.T) {
+			p, ok := Get(name)
+			if !ok {
+				t.Fatalf("persona %q not found via Get()", name)
+			}
+			if p.Name != name {
+				t.Errorf("Name = %q, want %q", p.Name, name)
+			}
+			if len(p.Instructions) < 200 {
+				t.Errorf("Instructions too short: %d chars", len(p.Instructions))
+			}
+			// Every persona must inherit the shared style rules and describe
+			// the input format.
+			for _, anchor := range []string{"DEFAULT MODE IS SILENCE", "TERMINAL OUTPUT", "MAX 8 WORDS"} {
+				if !strings.Contains(p.Instructions, anchor) {
+					t.Errorf("missing anchor %q", anchor)
+				}
+			}
+		})
 	}
 }

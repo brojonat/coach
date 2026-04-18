@@ -1,4 +1,4 @@
-.PHONY: build run run-headless test vet fmt tidy clean
+.PHONY: build run run-headless tail test vet fmt tidy clean
 
 BIN := bin/coach
 LOG_DIR := logs
@@ -7,10 +7,17 @@ build:
 	go build -o $(BIN) ./cmd/coach
 
 run: build | $(LOG_DIR)
-	@set -a; . ./.env; set +a; $(BIN) 2>&1 | tee $(LOG_DIR)/run.log
+	@set -a; . ./.env; set +a; $(BIN) 2>$(LOG_DIR)/coach.log
 
 run-headless: build | $(LOG_DIR)
-	@set -a; . ./.env; set +a; $(BIN) --no-audio --debug 2>&1 | tee $(LOG_DIR)/headless.log
+	@set -a; . ./.env; set +a; LOG_LEVEL=debug $(BIN) --scenario baseline --no-audio 2>$(LOG_DIR)/coach.log
+
+tail: | $(LOG_DIR)
+	@if command -v jq >/dev/null 2>&1; then \
+		tail -f $(LOG_DIR)/coach.log | jq -C '[.time, .level, .source, .msg] + [to_entries | map(select(.key | IN("time","level","source","msg") | not)) | from_entries] | @json'; \
+	else \
+		tail -f $(LOG_DIR)/coach.log; \
+	fi
 
 $(LOG_DIR):
 	@mkdir -p $(LOG_DIR)

@@ -5,33 +5,42 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/coder/websocket"
 )
 
 const realtimeBaseURL = "wss://api.openai.com/v1/realtime"
 
+// speakerDrain gives audio already buffered to the speakers time to finish
+// playing before we unmute the mic. Keeps the coach from hearing its own tail.
+const speakerDrain = 800 * time.Millisecond
+
 type OpenAIRealtime struct {
 	model      string
-	debug      bool
 	conn       *websocket.Conn
 	writeMu    sync.Mutex
 	audioOut   chan []byte
 	transcript chan string
 	cancel     context.CancelFunc
+	speaking   atomic.Bool
 }
 
-func NewOpenAIRealtime(model string, debug bool) *OpenAIRealtime {
+func NewOpenAIRealtime(model string) *OpenAIRealtime {
 	return &OpenAIRealtime{
 		model:      model,
-		debug:      debug,
 		audioOut:   make(chan []byte, 64),
 		transcript: make(chan string, 64),
 	}
+}
+
+func (o *OpenAIRealtime) log() *slog.Logger {
+	return slog.With("source", "agent")
 }
 
 func (o *OpenAIRealtime) Connect(ctx context.Context, instructions, voice string) error {
@@ -57,6 +66,8 @@ func (o *OpenAIRealtime) Connect(ctx context.Context, instructions, voice string
 	runCtx, cancel := context.WithCancel(context.Background())
 	o.cancel = cancel
 
+	o.log().Info("session init", "persona_chars", len(instructions), "persona", instructions)
+
 	sess := map[string]any{
 		"type": "session.update",
 		"session": map[string]any{
@@ -72,6 +83,13 @@ func (o *OpenAIRealtime) Connect(ctx context.Context, instructions, voice string
 				"silence_duration_ms": 500,
 			},
 			"input_audio_transcription": map[string]any{"model": "whisper-1"},
+			// Hard cap on per-response tokens — a safety belt, not the
+			// primary brevity control (that's in the persona + react
+			// instructions). The count mixes audio and text tokens, and
+			// audio is dense: ~50 tokens per second of speech. 400 leaves
+			// room for ~8 seconds, enough for two short clauses without
+			// letting the model drone on.
+			"max_response_output_tokens": 400,
 		},
 	}
 	if err := o.send(ctx, sess); err != nil {
@@ -92,7 +110,12 @@ func (o *OpenAIRealtime) send(ctx context.Context, v any) error {
 	return o.conn.Write(ctx, websocket.MessageText, b)
 }
 
+// SendUserAudio forwards mic audio, but drops chunks while the coach is
+// speaking so the coach doesn't hear itself via the speakers.
 func (o *OpenAIRealtime) SendUserAudio(chunk []byte) error {
+	if o.speaking.Load() {
+		return nil
+	}
 	return o.send(context.Background(), map[string]any{
 		"type":  "input_audio_buffer.append",
 		"audio": base64.StdEncoding.EncodeToString(chunk),
@@ -100,7 +123,8 @@ func (o *OpenAIRealtime) SendUserAudio(chunk []byte) error {
 }
 
 func (o *OpenAIRealtime) SendContext(text string) error {
-	if err := o.send(context.Background(), map[string]any{
+	o.log().Info("send context", "text", text)
+	return o.send(context.Background(), map[string]any{
 		"type": "conversation.item.create",
 		"item": map[string]any{
 			"type": "message",
@@ -109,10 +133,23 @@ func (o *OpenAIRealtime) SendContext(text string) error {
 				{"type": "input_text", "text": text},
 			},
 		},
-	}); err != nil {
-		return err
+	})
+}
+
+func (o *OpenAIRealtime) TriggerResponse(instructions string) error {
+	// Skip if a response is already streaming — OpenAI rejects with
+	// conversation_already_has_active_response. The speaking flag is
+	// cleared ~speakerDrain after response.done.
+	if o.speaking.Load() {
+		o.log().Debug("trigger skipped: coach still speaking")
+		return nil
 	}
-	return o.send(context.Background(), map[string]any{"type": "response.create"})
+	o.log().Info("trigger response", "instructions", instructions)
+	payload := map[string]any{"type": "response.create"}
+	if instructions != "" {
+		payload["response"] = map[string]any{"instructions": instructions}
+	}
+	return o.send(context.Background(), payload)
 }
 
 func (o *OpenAIRealtime) AudioOut() <-chan []byte   { return o.audioOut }
@@ -129,25 +166,24 @@ func (o *OpenAIRealtime) Close() error {
 }
 
 func (o *OpenAIRealtime) readLoop(ctx context.Context) {
+	log := o.log()
 	for {
 		_, data, err := o.conn.Read(ctx)
 		if err != nil {
 			if ctx.Err() == nil {
-				log.Printf("realtime read: %v", err)
+				log.Error("realtime read", "err", err)
 			}
 			return
 		}
-		if o.debug {
-			snippet := string(data)
-			if len(snippet) > 200 {
-				snippet = snippet[:200] + "..."
-			}
-			log.Printf("recv: %s", snippet)
+		// Raw server events go to DEBUG; LOG_LEVEL=debug to see them.
+		if log.Enabled(ctx, slog.LevelDebug) {
+			log.Debug("recv raw", "bytes", len(data), "payload", string(data))
 		}
 		var evt struct {
-			Type  string `json:"type"`
-			Delta string `json:"delta"`
-			Error struct {
+			Type       string `json:"type"`
+			Delta      string `json:"delta"`
+			Transcript string `json:"transcript"`
+			Error      struct {
 				Type    string `json:"type"`
 				Code    string `json:"code"`
 				Message string `json:"message"`
@@ -157,6 +193,10 @@ func (o *OpenAIRealtime) readLoop(ctx context.Context) {
 			continue
 		}
 		switch evt.Type {
+		case "response.created":
+			o.speaking.Store(true)
+		case "response.done", "response.cancelled":
+			time.AfterFunc(speakerDrain, func() { o.speaking.Store(false) })
 		case "response.audio.delta", "response.output_audio.delta":
 			audio, err := base64.StdEncoding.DecodeString(evt.Delta)
 			if err != nil {
@@ -179,8 +219,12 @@ func (o *OpenAIRealtime) readLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			}
+		case "conversation.item.input_audio_transcription.completed":
+			log.Info("whisper", "text", evt.Transcript)
+		case "conversation.item.input_audio_transcription.failed":
+			log.Error("whisper failed", "err", evt.Error.Message)
 		case "error":
-			log.Printf("realtime error: %s (%s/%s)", evt.Error.Message, evt.Error.Type, evt.Error.Code)
+			log.Error("realtime error", "type", evt.Error.Type, "code", evt.Error.Code, "msg", evt.Error.Message)
 		}
 	}
 }

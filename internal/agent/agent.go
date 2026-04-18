@@ -12,9 +12,16 @@ type Agent interface {
 	// SendUserAudio sends a chunk of user mic audio. Format is 24kHz mono PCM16 LE.
 	SendUserAudio(chunk []byte) error
 
-	// SendContext injects a text context item into the conversation — used for
-	// scripted terminal events, goals, etc. The agent should react to it.
+	// SendContext injects a text context item into the conversation. It does
+	// NOT request a spoken response — call TriggerResponse for that. Use this
+	// to keep the model aware of terminal activity without making it speak.
 	SendContext(text string) error
+
+	// TriggerResponse asks the model to generate a response now. Optional
+	// instructions augment (not replace) the session persona for this turn —
+	// use them to nudge the model toward a specific decision, e.g. "review
+	// recent terminal output; stay silent unless the user is off-goal."
+	TriggerResponse(instructions string) error
 
 	// AudioOut streams 24kHz mono PCM16 LE audio chunks produced by the model.
 	AudioOut() <-chan []byte
