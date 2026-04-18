@@ -1,4 +1,4 @@
-.PHONY: build run run-headless tail test vet fmt tidy clean
+.PHONY: build run run-headless tail watch test vet fmt tidy clean
 
 BIN := bin/coach
 LOG_DIR := logs
@@ -18,6 +18,9 @@ tail: | $(LOG_DIR)
 	else \
 		tail -f $(LOG_DIR)/coach.log; \
 	fi
+
+watch: build | $(LOG_DIR)
+	@$(BIN) watch --log $(LOG_DIR)/coach.log $(ARGS)
 
 $(LOG_DIR):
 	@mkdir -p $(LOG_DIR)

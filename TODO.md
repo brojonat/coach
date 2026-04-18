@@ -4,11 +4,11 @@
 
 Scored experiments against a task corpus so we can iterate on the persona with evidence instead of vibes.
 
-- [ ] SQLite store at `coach.db` (pure-Go driver: `modernc.org/sqlite`); migrations run on open
-- [ ] Schema: `tasks`, `experiments` (snapshots persona text + full config), `ratings`, `events`
-- [ ] `coach lab tasks seed` — inject ~15 starter tasks spanning beginner/intermediate/advanced, tagged (navigation, git, files, network, dangerous)
-- [ ] `coach lab tasks list [--tag X]`
-- [ ] `coach lab tasks show <slug>`
+- [x] SQLite store at `coach.db` (pure-Go driver: `modernc.org/sqlite`); migrations run on open
+- [x] Schema: `tasks`, `experiments` (snapshots persona text + full config), `ratings`, `events`
+- [x] `coach lab tasks seed` — inject ~15 starter tasks spanning beginner/intermediate/advanced, tagged (navigation, git, files, network, dangerous)
+- [x] `coach lab tasks list [--tag X]`
+- [x] `coach lab tasks show <slug>`
 - [ ] `coach lab tasks add` — interactive
 - [ ] `coach lab run <task-slug>` — wraps `run`, snapshots persona text + config, records an experiment row, returns the id
 - [ ] Custom `slog.Handler` mirrors every JSON entry into `events` during an active experiment (so the run is replayable)
@@ -20,6 +20,7 @@ Scored experiments against a task corpus so we can iterate on the persona with e
 
 ## Coach follow-ups
 
+- [x] `coach watch` sidecar — follow `logs/coach.log` in another pane/window and pretty-print coach turns + errors (default) or every event (`--all`). No second IPC channel; just tails the log the main session is already writing.
 - [ ] Prompt-redraw dedupe misses starship timestamp changes — smarter dedupe, or widen the nudge/react windows
 - [ ] Investigate OSC 133 prompt markers for reliable command/output scoping (alternative to full VT emulation if we ever re-enable user-side shell config)
 - [ ] "Lessons" concept — structured skill tutorials the coach can walk the user through (e.g. "learn git basics", "install a coding agent"); each lesson is a bundled task sequence + persona tweaks

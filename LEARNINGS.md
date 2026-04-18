@@ -14,6 +14,12 @@
 - **Piping stdout through `tee` destroys the TTY.** With `make run | tee logs/run.log`, `isatty(stdout)` becomes false and PTY forwarding / shell colors / resize detection all break. Keep stdout attached to the real terminal; redirect stderr to a file instead (`$(BIN) 2>logs/coach.log`).
 - **Two log sinks is a footgun.** We briefly had both `log.SetOutput` (Go-side) and `2>` (Makefile-side) pointing at different files; only one ever had content, the other was empty and confused me about "missing logs." Pick one sink, document it, stick with it.
 
+## SQLite / lab store
+
+- **`modernc.org/sqlite` registers as driver name `"sqlite"`, not `"sqlite3"`.** Using `sql.Open("sqlite3", ...)` with the pure-Go driver fails with `unknown driver`. Only `mattn/go-sqlite3` (cgo) uses `"sqlite3"`.
+- **Keep `MaxOpenConns = 1` for write-heavy SQLite.** Concurrent writes on a single file serialize anyway; capping the pool makes contention surface as backpressure instead of `SQLITE_BUSY` retries.
+- **`INSERT OR IGNORE` is the cheap idempotent seed.** Paired with a `UNIQUE` column (slug), it lets `seed` run repeatedly without extra round-trips or conflict handling. `RowsAffected()` tells you new-vs-skipped.
+
 ## Persona / prompt engineering
 
 - **Listing bad examples can backfire.** "DO NOT say 'it looks like…'" with an example sometimes causes the model to mimic the example instead of avoiding it. A banned-opener list without any example sentences that use the banned forms works better.

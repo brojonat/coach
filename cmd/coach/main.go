@@ -55,7 +55,7 @@ func main() {
 				NoAudio:  c.Bool("no-audio"),
 			})
 		},
-		Commands: []*cli.Command{devCommand()},
+		Commands: []*cli.Command{devCommand(), labCommand(), watchCommand()},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -148,6 +148,17 @@ func run(ctx context.Context, opts runOpts) error {
 
 const brevityRules = "MAX 8 WORDS. Fragments only. No preamble, no hedging, no 'it looks like', 'it seems', 'you may', 'let me'. Imperative verbs first."
 
+// openingInstructions fires once at session start. Unlike react, this turn
+// MUST speak — the user needs to hear the goal and an explicit start cue, so
+// we override the persona's default-silence rule explicitly.
+func openingInstructions(goal string) string {
+	base := brevityRules + " This is the session opener. Speak now — do NOT stay silent."
+	if goal == "" {
+		return base + " Ask the user what they want to accomplish. One short question."
+	}
+	return base + " Restate the goal in your own words and tell them to start. Goal: " + goal
+}
+
 // reactInstructions nudges the model to stay quiet unless coaching is needed.
 // Fired after shell activity settles. Augments the session persona.
 func reactInstructions(goal string) string {
@@ -176,9 +187,17 @@ func runPTY(ctx context.Context, ag agent.Agent, goal, shellPath string) error {
 	}
 	defer sh.Close()
 
+	// Opener: state the goal and cue the user. Fires exactly once, before the
+	// normal react/nudge cadence takes over.
+	if err := ag.TriggerResponse(openingInstructions(goal)); err != nil {
+		log.Error("opener trigger", "err", err)
+	} else {
+		log.Info("opener triggered", "goal", goal)
+	}
+
 	const (
 		reactDelay = 1500 * time.Millisecond
-		nudgeDelay = 15 * time.Second
+		nudgeDelay = 5 * time.Second
 	)
 
 	chunks := shell.Batch(ctx, sh.Events(), 300*time.Millisecond)

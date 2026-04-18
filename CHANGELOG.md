@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-04-18
+
+### Session opener
+- The coach now speaks a one-turn opener at session start (PTY mode): restates the `--goal` in its own words and cues the user to begin, or — when no goal is set — asks what they want to accomplish. Per-response instructions explicitly override the persona's default-silence rule so the model actually speaks.
+- Fires exactly once, before the normal react/nudge cadence. Scenario mode is unchanged (still drives responses per scripted event).
+
+### Cadence
+- Shortened the idle-nudge timer from 15s to 5s so the coach pings a stalled user faster. React debounce (1.5s after shell activity) unchanged.
+
+### `coach watch` sidecar
+- New `coach watch` subcommand tails `logs/coach.log` in a separate pane/window and pretty-prints coach turns (bold cyan `coach> …`) and errors/warnings by default; `--all` shows every slog event. `--from-start` reads the whole file before following; `--no-color` disables ANSI codes; `--log PATH` overrides the log file. Non-JSON lines pass through verbatim.
+- File-not-exist is polled (so you can start `coach watch` before `make run`); truncation/rotation is detected by comparing cursor position to file size and reopening from the top.
+- New `make watch` target. Keeps the PTY clean — no overlays, no in-shell redraws — and composes with tmux / screen / second terminal windows.
+
+### Lab framework — task corpus
+- New `internal/lab` package: `Store` over `modernc.org/sqlite` (pure-Go, no cgo) opens `coach.db` and applies numbered migrations on open. Schema covers `tasks`, `experiments` (snapshots persona text + config), `ratings`, and `events` with FK cascade where appropriate.
+- Seeded a 15-task starter corpus spanning beginner/intermediate/advanced and tagged (`navigation`, `files`, `git`, `network`, `dangerous`). Seeding is idempotent (`INSERT OR IGNORE` on `slug`).
+- New `coach lab tasks {seed,list,show}` subcommands. `list` honors `--tag`; output is tab-aligned and ordered by difficulty then slug. `--db` on the `lab` group overrides the default `coach.db` path.
+- Unit tests cover migration idempotence, seed idempotence, tag filtering, ordering, and `ErrTaskNotFound`.
+
 ## 2026-04-17
 
 ### Shell / PTY
